@@ -1,0 +1,7 @@
+anthropic
+streamlit
+psycopg2-binary
+pandas
+python-dotenv
+yfinance
+mcp
