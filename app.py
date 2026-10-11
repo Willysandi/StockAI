@@ -1,5 +1,4 @@
 import streamlit as st
-from claude_query import standalone_question, strategy_ticker, analyze_strategy, answer_data_query
 import pandas as pd
 from decimal import Decimal
 
@@ -8,6 +7,13 @@ st.set_page_config(
     page_icon="📈",
     layout="centered"
 )
+
+try:
+    from claude_query import standalone_question, strategy_ticker, analyze_strategy, answer_data_query
+except EnvironmentError as e:
+    # Streamlit Cloud hides exception messages, so show the missing setting explicitly
+    st.error(f"StockAI isn't configured yet: {e} Add it under the app's Settings → Secrets.")
+    st.stop()
 
 DISCLAIMER = "StockAI provides information, not financial advice. Data may be delayed or incomplete; do your own research."
 

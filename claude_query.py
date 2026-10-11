@@ -21,8 +21,9 @@ try:
 except Exception:
     pass
 
-if not ANTHROPIC_KEY:
-    raise EnvironmentError("ANTHROPIC_API_KEY not found in .env or Streamlit secrets.")
+missing = [name for name, value in (("ANTHROPIC_API_KEY", ANTHROPIC_KEY), ("DATABASE_URL", DB_URL)) if not value]
+if missing:
+    raise EnvironmentError(f"{', '.join(missing)} not found in .env or Streamlit secrets.")
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
