@@ -5,3 +5,5 @@ pandas
 python-dotenv
 yfinance
 mcp
+lxml
+requests

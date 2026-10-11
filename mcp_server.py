@@ -10,10 +10,10 @@ load_dotenv()
 
 DB_URL = os.getenv("DATABASE_URL")
 
-app = Server("asx-stock-server")
+app = Server("us-stock-server")
 
 def is_safe_sql(sql: str) -> bool:
-    return sql.strip().split()[0].upper() == "SELECT"
+    return sql.strip().split()[0].upper() in ("SELECT", "WITH")
 
 def run_query(sql: str):
     if not is_safe_sql(sql):
@@ -29,8 +29,8 @@ def run_query(sql: str):
 async def list_tools():
     return [
         Tool(
-            name="query_asx_stocks",
-            description="Run a SELECT query against the ASX stocks database. The table is called asx_stocks with columns: ticker, date, open, high, low, close, volume.",
+            name="query_us_stocks",
+            description="Run a SELECT query against the S&P 500 stocks database. Tables: us_stocks (ticker, date, open, high, low, close, volume) with daily prices in USD, and companies (ticker, name, sector, industry). Tickers use Yahoo format e.g. AAPL, BRK-B.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -46,7 +46,7 @@ async def list_tools():
 
 @app.call_tool()
 async def call_tool(name: str, arguments: dict):
-    if name == "query_asx_stocks":
+    if name == "query_us_stocks":
         sql = arguments["sql"]
         try:
             columns, rows = run_query(sql)
