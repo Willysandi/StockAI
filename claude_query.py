@@ -87,6 +87,24 @@ def strategy_ticker(question: str):
         return tickers[0]
     return None
 
+def standalone_question(question: str, history: list[dict]) -> str:
+    """Rewrites a follow-up like "what about AMD?" into a self-contained question."""
+    if not history:
+        return question
+    transcript = "\n".join(f"{turn['role']}: {turn['content']}" for turn in history[-6:])
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=200,
+        temperature=0,
+        system="""Rewrite the user's latest question about S&P 500 stocks so it can be understood
+        without the conversation. Fill in tickers, companies, metrics and time periods it refers to
+        (e.g. after a strategy answer on NVDA, "what about AMD?" -> "What's the strategy for AMD?").
+        If it is already self-contained, return it unchanged.
+        Return ONLY the rewritten question, nothing else.""",
+        messages=[{"role": "user", "content": f"Conversation:\n{transcript}\n\nLatest question: {question}"}],
+    )
+    return response.content[0].text.strip() or question
+
 def ask_claude(question: str):
     ticker = strategy_ticker(question)
     if ticker:

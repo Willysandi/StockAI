@@ -1,36 +1,17 @@
 import streamlit as st
-from claude_query import strategy_ticker, analyze_strategy, answer_data_query
+from claude_query import standalone_question, strategy_ticker, analyze_strategy, answer_data_query
 import pandas as pd
 from decimal import Decimal
 
 st.set_page_config(
-    page_title="S&P 500 Stock Dashboard",
+    page_title="StockAI",
     page_icon="📈",
-    layout="wide"
+    layout="centered"
 )
 
-st.title("📈 S&P 500 Stock Dashboard")
-st.markdown("Ask any question about S&P 500 stock performance in plain English, or ask for a strategy on a single stock.")
+DISCLAIMER = "StockAI provides information, not financial advice. Data may be delayed or incomplete; do your own research."
 
-st.divider()
-
-with st.sidebar:
-    st.header("About")
-    st.markdown("""
-    This dashboard uses:
-    - **PostgreSQL** to store S&P 500 stock data
-    - **Claude AI** to convert your question to SQL
-    - **Fixed technical rules** for consistent BUY / HOLD / SELL signals
-    - **Yahoo Finance** for earnings & valuation
-    - **Claude web search** for the latest news
-    - **MCP** to connect Claude to the database
-    - **Streamlit** for this interface
-    """)
-    st.markdown("**Stocks tracked:**")
-    st.markdown("All S&P 500 constituents (~500), with sector & industry")
-
-st.subheader("Try asking:")
-examples = [
+EXAMPLES = [
     "Which 10 stocks had the highest return over the last 3 months?",
     "What is the average closing price of AAPL over the past 3 months?",
     "Which sector had the best average performance this year?",
@@ -41,16 +22,18 @@ examples = [
     "Is AAPL a buy after its latest earnings?",
 ]
 
-cols = st.columns(2)
-for i, example in enumerate(examples):
-    if cols[i % 2].button(example, width="stretch"):
-        st.session_state.question = example
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-question = st.text_input(
-    "Your question:",
-    value=st.session_state.get("question", ""),
-    placeholder="e.g. Which S&P 500 stock had the highest closing price last month?"
-)
+with st.sidebar:
+    st.title("📈 StockAI")
+    if st.button("New chat", icon="➕", width="stretch"):
+        st.session_state.messages = []
+        st.rerun()
+    st.caption(DISCLAIMER)
+
+st.title("📈 StockAI")
+st.caption("Ask anything about S&P 500 stocks: prices, returns, sectors, or whether a stock looks like a buy.")
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def cached_strategy(ticker, _question):
@@ -59,6 +42,10 @@ def cached_strategy(ticker, _question):
 
 PCT_WORDS = ("pct", "percent", "return")
 PRICE_WORDS = ("open", "high", "low", "close", "price", "sma", "ma_", "eps", "target")
+
+def md(text):
+    # Streamlit renders $...$ as LaTeX, which mangles prices like $80.30
+    return text.replace("$", "\\$")
 
 def fmt(value, prefix="", suffix=""):
     return "n/a" if value is None else f"{prefix}{value:,.2f}{suffix}"
@@ -112,7 +99,7 @@ def format_indicator(key, value):
         return f"{value:.2f}"
     return f"${value:,.2f}"
 
-def show_strategy(result):
+def render_strategy(result, key):
     ind, sig, fund = result["indicators"], result["signal"], result["fundamentals"]
     val = fund.get("valuation") or {}
 
@@ -123,33 +110,29 @@ def show_strategy(result):
     c3.metric("RSI (14)", fmt(ind["rsi_14"]))
     c4.metric("Next earnings", fund.get("next_earnings_date") or "n/a")
 
-    with st.expander("How the signal was scored", expanded=True):
+    with st.expander("Why this signal?"):
         for rule in sig["rules"]:
-            st.markdown(f"- **{rule['points']:+d}** {rule['reason']}")
+            st.markdown(md(f"- **{rule['points']:+d}** {rule['reason']}"))
         st.caption("Score ≥ 2 = BUY, ≤ −2 = SELL, otherwise HOLD. Same data always gives the same signal.")
 
-    st.subheader("Price vs moving averages")
+    st.markdown("**Price vs moving averages**")
     st.line_chart(result["prices"])
 
-    left, right = st.columns(2)
-    with left:
-        st.markdown("**Key indicators**")
+    st.markdown(md(result["insight"]))
+
+    with st.expander("Indicators & earnings"):
         rows = [(INDICATOR_LABELS.get(k, k), format_indicator(k, v)) for k, v in ind.items()]
-        st.dataframe(pd.DataFrame(rows, columns=["Indicator", "Value"]), hide_index=True, width="stretch")
-    with right:
+        st.dataframe(pd.DataFrame(rows, columns=["Indicator", "Value"]), hide_index=True, width="stretch", key=f"ind_{key}")
         st.markdown("**Recent earnings (EPS)**")
         if fund.get("recent_earnings"):
-            st.dataframe(format_table(pd.DataFrame(fund["recent_earnings"])), hide_index=True, width="stretch")
+            st.dataframe(format_table(pd.DataFrame(fund["recent_earnings"])), hide_index=True, width="stretch", key=f"eps_{key}")
         else:
             st.caption("No earnings data available.")
-        st.markdown(
+        st.markdown(md(
             f"P/E {fmt(val.get('trailing_pe'))} trailing, {fmt(val.get('forward_pe'))} forward · "
             f"Analyst target {fmt(val.get('analyst_target_mean'), '$')} · "
             f"Rating {val.get('analyst_recommendation') or 'n/a'}"
-        )
-
-    st.subheader("Claude's Strategy Note")
-    st.markdown(result["insight"])
+        ))
 
     if result["sources"]:
         with st.expander(f"Sources ({len(result['sources'])})"):
@@ -157,48 +140,92 @@ def show_strategy(result):
                 age = f" · {src['age']}" if src.get("age") else ""
                 st.markdown(f"- [{src['title']}]({src['url']}){age}")
 
-if st.button("Ask Claude", type="primary") and question:
-    with st.spinner("Claude is thinking..."):
-        try:
-            ticker = strategy_ticker(question)
-            if ticker:
-                result = cached_strategy(ticker, question)
-            else:
-                result = answer_data_query(question)
-        except Exception as e:
-            st.error(f"Something went wrong: {e}")
-            st.stop()
+def render_data(result, key):
+    st.markdown(md(result["insight"]))
 
-    st.divider()
+    if not result["rows"]:
+        return
 
-    if result["mode"] == "strategy":
-        show_strategy(result)
-        st.stop()
-
-    st.subheader("Claude's Insight")
-    st.info(result["insight"])
-
-    with st.expander("View generated SQL"):
-        st.code(result["sql"], language="sql")
-
-    if result["rows"]:
-        st.subheader("Data")
-        df = pd.DataFrame(result["rows"], columns=result["columns"])
-        st.dataframe(format_table(df), width="stretch")
-
-        if "close" in df.columns and "date" in df.columns:
-            st.subheader("Price Chart")
-            df["date"] = pd.to_datetime(df["date"])
-            df["close"] = df["close"].astype(float).round(2)
-            df = df.sort_values("date")
-            ticker_count = df["ticker"].nunique() if "ticker" in df.columns else 1
-            if ticker_count > 10:
-                st.caption(f"Chart skipped: {ticker_count} tickers is too many to plot. Ask about 10 or fewer.")
-            else:
-                if ticker_count > 1:
-                    chart_data = df.pivot(index="date", columns="ticker", values="close")
-                else:
-                    chart_data = df.set_index("date")[["close"]]
-                st.line_chart(chart_data)
+    df = pd.DataFrame(result["rows"], columns=result["columns"])
+    if len(df) > 10:
+        with st.expander(f"Data ({len(df)} rows)"):
+            st.dataframe(format_table(df), hide_index=True, width="stretch", key=f"data_{key}")
     else:
-        st.warning("No data returned for this query.")
+        st.dataframe(format_table(df), hide_index=True, width="stretch", key=f"data_{key}")
+
+    if "close" in df.columns and "date" in df.columns:
+        df["date"] = pd.to_datetime(df["date"])
+        df["close"] = df["close"].astype(float).round(2)
+        df = df.sort_values("date")
+        ticker_count = df["ticker"].nunique() if "ticker" in df.columns else 1
+        if ticker_count > 10:
+            st.caption(f"Chart skipped: {ticker_count} tickers is too many to plot. Ask about 10 or fewer.")
+        else:
+            if ticker_count > 1:
+                chart_data = df.pivot(index="date", columns="ticker", values="close")
+            else:
+                chart_data = df.set_index("date")[["close"]]
+            st.line_chart(chart_data)
+
+def render_message(message, key):
+    if message["role"] == "user":
+        st.markdown(md(message["content"]))
+    elif message.get("error"):
+        st.error(message["error"])
+    elif message["result"]["mode"] == "strategy":
+        render_strategy(message["result"], key)
+    else:
+        render_data(message["result"], key)
+
+def summarize(result):
+    """Short text of an answer, used to resolve follow-up questions."""
+    if result["mode"] == "strategy":
+        return f"Strategy for {result['ticker']} ({result['name']}): {result['signal']['signal']}"
+    return result["insight"][:300]
+
+def answer(question):
+    history = [
+        {"role": m["role"], "content": m["content"]}
+        for m in st.session_state.messages[:-1] if not m.get("error")
+    ]
+    question = standalone_question(question, history)
+    ticker = strategy_ticker(question)
+    if ticker:
+        return cached_strategy(ticker, question)
+    return answer_data_query(question)
+
+pending = st.session_state.pop("pending_question", None)
+
+for i, message in enumerate(st.session_state.messages):
+    with st.chat_message(message["role"]):
+        render_message(message, i)
+
+if not st.session_state.messages and not pending:
+    st.markdown("**Try asking:**")
+    cols = st.columns(2)
+    for i, example in enumerate(EXAMPLES):
+        if cols[i % 2].button(example, width="stretch", key=f"example_{i}"):
+            st.session_state.pending_question = example
+            st.rerun()
+    st.caption(DISCLAIMER)
+
+question = st.chat_input("Ask about any S&P 500 stock…") or pending
+
+if question:
+    st.session_state.messages.append({"role": "user", "content": question})
+    with st.chat_message("user"):
+        st.markdown(md(question))
+
+    with st.chat_message("assistant"):
+        with st.spinner("Analysing…"):
+            try:
+                result = answer(question)
+                reply = {"role": "assistant", "content": summarize(result), "result": result}
+            except Exception:
+                reply = {
+                    "role": "assistant",
+                    "content": "Error",
+                    "error": "Sorry, I couldn't answer that. Try rephrasing, or check the ticker is in the S&P 500.",
+                }
+    st.session_state.messages.append(reply)
+    st.rerun()

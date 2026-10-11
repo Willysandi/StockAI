@@ -1,6 +1,8 @@
-# 📈 S&P 500 Stock Dashboard
+# 📈 StockAI
 
-Ask questions about S&P 500 stock performance in plain English. Claude AI converts your question into SQL, runs it against a PostgreSQL database of historical stock data, and explains the results back to you with charts. Ask for a strategy on a single stock and you get a consistent rule-based BUY / HOLD / SELL signal, combined with the latest earnings and news.
+Chat with AI about S&P 500 stocks. Ask in plain English, for example *"Which sector did best this year?"* or *"Should I buy NVDA?"*, and get an answer with tables and charts. Follow-up questions keep the context, so *"what about AMD?"* works after asking about NVDA.
+
+Behind the scenes, Claude AI converts data questions into SQL and runs them against a PostgreSQL database of historical stock data. A strategy question about a single stock gets a consistent rule-based BUY / HOLD / SELL signal, combined with the latest earnings and news.
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![Streamlit](https://img.shields.io/badge/Streamlit-app-FF4B4B)
@@ -19,14 +21,15 @@ Claude AI ──► generates SQL ──► PostgreSQL (us_stocks + companies)
 Claude AI ◄── query results ◄── safe SELECT-only execution
         │
         ▼
-Streamlit dashboard: insight + data table + price chart
+Chat reply: insight + data table + price chart
 ```
 
 1. You type a question like *"Which stock had the biggest single-day price drop this year?"*
-2. Claude converts it to a SQL query against the `us_stocks` and `companies` tables
-3. The query runs against PostgreSQL (SELECT-only queries are enforced)
-4. Claude analyses the results and writes a short financial insight
-5. Streamlit displays the insight, the generated SQL, a formatted data table, and a price chart
+2. If it's a follow-up, Claude first rewrites it into a self-contained question using the recent chat (e.g. *"what about AMD?"* → *"What's the strategy for AMD?"*)
+3. Claude converts it to a SQL query against the `us_stocks` and `companies` tables
+4. The query runs against PostgreSQL (SELECT-only queries are enforced)
+5. Claude analyses the results and writes a short financial insight
+6. The chat shows the insight, a formatted data table and a price chart
 
 A quick classification step first decides whether the question is a **data query** (the flow above) or a **strategy question** about one stock (e.g. *"Should I buy NVDA?"*), which uses strategy mode below.
 
@@ -59,8 +62,8 @@ All S&P 500 constituents (~500 companies). The constituent list — with company
 
 | File | Purpose |
 |---|---|
-| `app.py` | Streamlit dashboard UI |
-| `claude_query.py` | Claude integration: routes the question, then question → SQL → results → insight, or the strategy note with web search |
+| `app.py` | Streamlit chat UI |
+| `claude_query.py` | Claude integration: resolves follow-ups, routes the question, then question → SQL → results → insight, or the strategy note with web search |
 | `indicators.py` | Fixed technical indicators and the BUY / HOLD / SELL scorecard |
 | `market_data.py` | Earnings dates, EPS history and valuation from Yahoo Finance |
 | `database.py` | Creates the `us_stocks` and `companies` tables, syncs S&P 500 constituents and loads/updates prices from Yahoo Finance |
@@ -102,7 +105,7 @@ python database.py
 
 This creates the tables (if they don't exist), syncs the S&P 500 constituent list and downloads daily price data in batches. The first run loads ~125k rows and takes a few minutes. Re-run it any time to fetch the latest prices — it only inserts dates that are missing.
 
-### 4. Run the dashboard
+### 4. Run the app
 
 ```bash
 streamlit run app.py
