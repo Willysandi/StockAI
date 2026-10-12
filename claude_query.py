@@ -44,11 +44,15 @@ if missing:
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
+# Sonnet writes the SQL and strategy notes, where mistakes reach the user.
+# Haiku handles routing, rewriting and short insights, which are simple and 20x cheaper.
 MODEL = "claude-sonnet-5-5"
+FAST_MODEL = "claude-haiku-5-5"
 # Routing, rewriting, SQL and short insights are simple, so they run at low effort.
 # max_tokens covers any thinking as well as the reply.
 QUICK = {"max_tokens": 4000, "output_config": {"effort": "low"}}
-# If Claude declines (cyber / frontier_llm safety categories), the API retries on another model
+# If Claude declines (cyber / frontier_llm safety categories), the API retries on another model.
+# Haiku has no server-side fallback, so only Sonnet calls use this.
 FALLBACK = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
 MAX_INSIGHT_ROWS = 200
 MAX_PAUSE_RESTARTS = 3
@@ -86,9 +90,8 @@ def run_query(sql: str):
 
 def classify_question(question: str) -> Route:
     response = client.beta.messages.parse(
-        model=MODEL,
+        model=FAST_MODEL,
         **QUICK,
-        **FALLBACK,
         system="""Classify a question about S&P 500 stocks.
         intent = "strategy" when the user wants a trading view, outlook, recommendation or
         strategy for one specific stock (e.g. "should I buy NVDA", "strategy for Apple",
@@ -126,9 +129,8 @@ def standalone_question(question: str, history: list[dict]) -> str:
         return question
     transcript = "\n".join(f"{turn['role']}: {turn['content']}" for turn in history[-6:])
     response = client.beta.messages.create(
-        model=MODEL,
+        model=FAST_MODEL,
         **QUICK,
-        **FALLBACK,
         system="""Rewrite the user's latest question about S&P 500 stocks so it can be understood
         without the conversation. Fill in tickers, companies, metrics and time periods it refers to
         (e.g. after a strategy answer on NVDA, "what about AMD?" -> "What's the strategy for AMD?").
@@ -187,9 +189,8 @@ def answer_data_query(question: str):
             result_data["note"] = f"Showing first {MAX_INSIGHT_ROWS} of {len(rows)} rows"
 
         insight_response = client.beta.messages.create(
-            model=MODEL,
+            model=FAST_MODEL,
             **QUICK,
-            **FALLBACK,
             system="""You are a financial analyst specialising in US equities and the S&P 500.
             The user asked a question and you ran a SQL query to get data.
             Now provide a clear, concise insight based on the results.
