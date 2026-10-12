@@ -14,16 +14,33 @@ load_dotenv(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"))
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 DB_URL = os.getenv("DATABASE_URL")
 
+def find_secret(secrets, name):
+    # Accept the key at the top level or inside one [section] of secrets.toml
+    if name in secrets:
+        return secrets[name]
+    for value in secrets.values():
+        if hasattr(value, "get") and value.get(name):
+            return value[name]
+    return None
+
+secrets_note = ""
 try:
     import streamlit as st
-    ANTHROPIC_KEY = st.secrets.get("ANTHROPIC_API_KEY") or ANTHROPIC_KEY
-    DB_URL = st.secrets.get("DATABASE_URL") or DB_URL
-except Exception:
-    pass
+    secrets = st.secrets.to_dict()
+    ANTHROPIC_KEY = find_secret(secrets, "ANTHROPIC_API_KEY") or ANTHROPIC_KEY
+    DB_URL = find_secret(secrets, "DATABASE_URL") or DB_URL
+    # Names only, never values, so the message is safe to show
+    secrets_note = f" Secrets found: {', '.join(secrets) or 'none'}."
+except Exception as e:
+    if "parsing" in str(e):
+        secrets_note = (' Streamlit secrets have a format error: write each one as NAME = "value", '
+                        'with quotes around the value.')
+    else:
+        secrets_note = " No Streamlit secrets were found."
 
 missing = [name for name, value in (("ANTHROPIC_API_KEY", ANTHROPIC_KEY), ("DATABASE_URL", DB_URL)) if not value]
 if missing:
-    raise EnvironmentError(f"{', '.join(missing)} not found in .env or Streamlit secrets.")
+    raise EnvironmentError(f"{', '.join(missing)} not found in .env or Streamlit secrets.{secrets_note}")
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
