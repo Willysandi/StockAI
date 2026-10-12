@@ -27,15 +27,27 @@ if missing:
 
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
-MODEL = "claude-sonnet-4-6"
-# anthropic 1.x removed the temperature argument; this model still accepts it in the
-# request body, and temperature 0 keeps answers consistent between runs
+MODEL = "claude-sonnet-5-5"
+# Routing, rewriting, SQL and short insights are simple, so they run at low effort.
+# max_tokens covers any thinking as well as the reply.
+QUICK = {"max_tokens": 4000, "output_config": {"effort": "low"}}
+# If Claude declines (cyber / frontier_llm safety categories), the API retries on another model
+FALLBACK = {"betas": ["server-side-fallback-2026-07-01"], "fallbacks": "default"}
 MAX_INSIGHT_ROWS = 200
 MAX_PAUSE_RESTARTS = 3
 
 class Route(BaseModel):
     intent: Literal["data_query", "strategy"]
     tickers: list[str]
+
+def check_refusal(response):
+    if response.stop_reason == "refusal":
+        raise RuntimeError("Claude declined to answer this question.")
+
+def reply_text(response) -> str:
+    # The reply can start with thinking blocks, so read text blocks by type
+    check_refusal(response)
+    return "".join(block.text for block in response.content if block.type == "text").strip()
 
 def is_safe_sql(sql: str) -> bool:
     return sql.strip().split()[0].upper() in ("SELECT", "WITH")
@@ -56,10 +68,10 @@ def run_query(sql: str):
     return columns, rows
 
 def classify_question(question: str) -> Route:
-    response = client.messages.parse(
+    response = client.beta.messages.parse(
         model=MODEL,
-        max_tokens=500,
-        extra_body={"temperature": 0},
+        **QUICK,
+        **FALLBACK,
         system="""Classify a question about S&P 500 stocks.
         intent = "strategy" when the user wants a trading view, outlook, recommendation or
         strategy for one specific stock (e.g. "should I buy NVDA", "strategy for Apple",
@@ -71,6 +83,7 @@ def classify_question(question: str) -> Route:
         messages=[{"role": "user", "content": question}],
         output_format=Route,
     )
+    check_refusal(response)
     return response.parsed_output
 
 def known_tickers(tickers: list[str]) -> list[str]:
@@ -95,10 +108,10 @@ def standalone_question(question: str, history: list[dict]) -> str:
     if not history:
         return question
     transcript = "\n".join(f"{turn['role']}: {turn['content']}" for turn in history[-6:])
-    response = client.messages.create(
+    response = client.beta.messages.create(
         model=MODEL,
-        max_tokens=200,
-        extra_body={"temperature": 0},
+        **QUICK,
+        **FALLBACK,
         system="""Rewrite the user's latest question about S&P 500 stocks so it can be understood
         without the conversation. Fill in tickers, companies, metrics and time periods it refers to
         (e.g. after a strategy answer on NVDA, "what about AMD?" -> "What's the strategy for AMD?").
@@ -106,7 +119,7 @@ def standalone_question(question: str, history: list[dict]) -> str:
         Return ONLY the rewritten question, nothing else.""",
         messages=[{"role": "user", "content": f"Conversation:\n{transcript}\n\nLatest question: {question}"}],
     )
-    return response.content[0].text.strip() or question
+    return reply_text(response) or question
 
 def ask_claude(question: str):
     ticker = strategy_ticker(question)
@@ -115,10 +128,10 @@ def ask_claude(question: str):
     return answer_data_query(question)
 
 def answer_data_query(question: str):
-    sql_response = client.messages.create(
+    sql_response = client.beta.messages.create(
         model=MODEL,
-        max_tokens=1000,
-        extra_body={"temperature": 0},
+        **QUICK,
+        **FALLBACK,
         system="""You are a PostgreSQL expert. Convert the user's question into a SQL query.
         The database covers all S&P 500 companies and has two tables:
 
@@ -147,7 +160,7 @@ def answer_data_query(question: str):
         messages=[{"role": "user", "content": question}]
     )
 
-    sql = extract_sql(sql_response.content[0].text)
+    sql = extract_sql(reply_text(sql_response))
 
     try:
         columns, rows = run_query(sql)
@@ -156,10 +169,10 @@ def answer_data_query(question: str):
         if len(rows) > MAX_INSIGHT_ROWS:
             result_data["note"] = f"Showing first {MAX_INSIGHT_ROWS} of {len(rows)} rows"
 
-        insight_response = client.messages.create(
+        insight_response = client.beta.messages.create(
             model=MODEL,
-            max_tokens=1000,
-            extra_body={"temperature": 0},
+            **QUICK,
+            **FALLBACK,
             system="""You are a financial analyst specialising in US equities and the S&P 500.
             The user asked a question and you ran a SQL query to get data.
             Now provide a clear, concise insight based on the results.
@@ -175,7 +188,7 @@ def answer_data_query(question: str):
             ]
         )
 
-        insight = insight_response.content[0].text.strip()
+        insight = reply_text(insight_response)
 
         return {
             "mode": "data",
@@ -186,12 +199,18 @@ def answer_data_query(question: str):
         }
 
     except (psycopg2.Error, ValueError) as e:
+        # Users don't see the SQL, so explain in plain words instead of showing the database error
+        if isinstance(e, ValueError):
+            insight = ("I couldn't turn that into a question about stock data. Try asking about a "
+                       "ticker, sector or time period, e.g. \"How did AAPL do this month?\"")
+        else:
+            insight = "I couldn't get that data. Try rephrasing your question."
         return {
             "mode": "data",
             "sql": sql,
             "columns": [],
             "rows": [],
-            "insight": f"Error running query: {str(e)}"
+            "insight": insight
         }
 
 STRATEGY_SYSTEM = """You are an equity analyst writing a short strategy note on one S&P 500 stock.
@@ -252,14 +271,16 @@ def analyze_strategy(ticker: str, question: str):
 
     content = []
     for _ in range(MAX_PAUSE_RESTARTS + 1):
-        response = client.messages.create(
+        response = client.beta.messages.create(
             model=MODEL,
-            max_tokens=4000,
-            extra_body={"temperature": 0},
+            max_tokens=16000,
+            output_config={"effort": "medium"},
+            **FALLBACK,
             system=STRATEGY_SYSTEM,
             tools=[{"type": "web_search_20260209", "name": "web_search", "max_uses": 3}],
             messages=messages,
         )
+        check_refusal(response)
         content.extend(response.content)
         if response.stop_reason != "pause_turn":
             break

@@ -49,7 +49,7 @@ To keep answers consistent, the numbers and the verdict are calculated in Python
 
    A score of 2 or more is **BUY**, −2 or less is **SELL**, anything else is **HOLD**. The same data always gives the same signal.
 3. `market_data.py` pulls the next earnings date, the last 4 quarters of EPS (estimate, actual, surprise) and valuation (P/E, analyst target and rating) from Yahoo Finance.
-4. Claude uses its **web search** tool (up to 3 searches) to find news from the last 30 days, then writes a note with fixed sections: Signal, Technical picture, Earnings & valuation, Recent news, Risks, Bottom line. Claude can't change the signal, but it flags news that points the other way. All calls use `temperature=0`.
+4. Claude uses its **web search** tool (up to 3 searches) to find news from the last 30 days, then writes a note with fixed sections: Signal, Technical picture, Earnings & valuation, Recent news, Risks, Bottom line. Claude can't change the signal, but it flags news that points the other way. The app uses Claude Sonnet 5.5: `low` effort for routing, SQL and short insights, `medium` for strategy notes.
 5. The dashboard caches each stock's strategy for 1 hour, so asking again (in any wording) returns the identical answer.
 
 Web search costs about $10 per 1,000 searches plus tokens, so at most about 3 cents per strategy question for searches. It must be enabled for your organisation in the [Anthropic Console](https://console.anthropic.com). Strategy notes are informational, not financial advice.
