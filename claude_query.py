@@ -28,6 +28,8 @@ if missing:
 client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
 
 MODEL = "claude-sonnet-4-6"
+# anthropic 1.x removed the temperature argument; this model still accepts it in the
+# request body, and temperature 0 keeps answers consistent between runs
 MAX_INSIGHT_ROWS = 200
 MAX_PAUSE_RESTARTS = 3
 
@@ -57,7 +59,7 @@ def classify_question(question: str) -> Route:
     response = client.messages.parse(
         model=MODEL,
         max_tokens=500,
-        temperature=0,
+        extra_body={"temperature": 0},
         system="""Classify a question about S&P 500 stocks.
         intent = "strategy" when the user wants a trading view, outlook, recommendation or
         strategy for one specific stock (e.g. "should I buy NVDA", "strategy for Apple",
@@ -96,7 +98,7 @@ def standalone_question(question: str, history: list[dict]) -> str:
     response = client.messages.create(
         model=MODEL,
         max_tokens=200,
-        temperature=0,
+        extra_body={"temperature": 0},
         system="""Rewrite the user's latest question about S&P 500 stocks so it can be understood
         without the conversation. Fill in tickers, companies, metrics and time periods it refers to
         (e.g. after a strategy answer on NVDA, "what about AMD?" -> "What's the strategy for AMD?").
@@ -116,7 +118,7 @@ def answer_data_query(question: str):
     sql_response = client.messages.create(
         model=MODEL,
         max_tokens=1000,
-        temperature=0,
+        extra_body={"temperature": 0},
         system="""You are a PostgreSQL expert. Convert the user's question into a SQL query.
         The database covers all S&P 500 companies and has two tables:
 
@@ -157,7 +159,7 @@ def answer_data_query(question: str):
         insight_response = client.messages.create(
             model=MODEL,
             max_tokens=1000,
-            temperature=0,
+            extra_body={"temperature": 0},
             system="""You are a financial analyst specialising in US equities and the S&P 500.
             The user asked a question and you ran a SQL query to get data.
             Now provide a clear, concise insight based on the results.
@@ -253,7 +255,7 @@ def analyze_strategy(ticker: str, question: str):
         response = client.messages.create(
             model=MODEL,
             max_tokens=4000,
-            temperature=0,
+            extra_body={"temperature": 0},
             system=STRATEGY_SYSTEM,
             tools=[{"type": "web_search_20260209", "name": "web_search", "max_uses": 3}],
             messages=messages,
